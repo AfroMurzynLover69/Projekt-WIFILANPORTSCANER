@@ -7,6 +7,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#define LV_CONF_PATH "lv_conf.h"
 #include <lvgl.h>
 #include "konfiguracja.h"
 #include "gui.h"
@@ -33,6 +34,8 @@ static String g_status_text = "Status: gotowy";
 static String g_log_text = "Log: start\n";
 static uint32_t g_progress_done = 0;
 static uint32_t g_progress_total = 0;
+static uint32_t g_port_scan_start = SCAN_PORT_START;
+static uint32_t g_port_scan_end = SCAN_PORT_END;
 
 void init_app_state() {
   if (!g_lock) g_lock = xSemaphoreCreateMutex();
@@ -80,6 +83,35 @@ void append_log(const String &line) {
   unlock_state();
 }
 
+void set_port_scan_range(uint32_t start, uint32_t end) {
+  lock_state();
+  g_port_scan_start = start;
+  g_port_scan_end = end;
+  unlock_state();
+}
+
+void set_port_profile_legacy() {
+  set_port_scan_range(0, 4096);
+}
+
+void set_port_profile_full() {
+  set_port_scan_range(SCAN_PORT_START, SCAN_PORT_END);
+}
+
+void get_port_scan_range(uint32_t &start, uint32_t &end) {
+  lock_state();
+  start = g_port_scan_start;
+  end = g_port_scan_end;
+  unlock_state();
+}
+
+bool is_port_profile_legacy() {
+  lock_state();
+  bool legacy = (g_port_scan_start == 0 && g_port_scan_end == 4096);
+  unlock_state();
+  return legacy;
+}
+
 void mark_scan_started() {
   lock_state();
   g_scan_running = true;
@@ -124,7 +156,6 @@ IPAddress u32_to_ip(uint32_t v) {
 
 // Forward declaration used by UI/serial.
 bool start_scan_request(const char *source);
-bool start_bridge_scan_request(const char *source);
 const char *scan_mode_name();
 
 static unsigned long g_wifi_retry_ts = 0;
@@ -317,13 +348,13 @@ void print_serial_help() {
   Serial.println("  HELP");
   Serial.println("  STATUS");
   Serial.println("  START   (local scan)");
-  Serial.println("  BRIDGE  (scan przez Python bridge)");
 }
 
 static void serial_status() {
+  uint32_t port_start = 0, port_end = 0;
+  get_port_scan_range(port_start, port_end);
   Serial.println(is_scan_busy() ? "SCAN: RUNNING" : "SCAN: IDLE");
-  Serial.println(String("MODE: ") + scan_mode_name() + " + PORTS " + SCAN_PORT_START + "-" + SCAN_PORT_END);
-  Serial.println(String("BRIDGE: ") + BRIDGE_SERVER_IP + ":" + BRIDGE_SERVER_PORT);
+  Serial.println(String("MODE: ") + scan_mode_name() + " + PORTS " + port_start + "-" + port_end);
 }
 
 static void process_serial_cmd(String line) {
@@ -343,10 +374,6 @@ static void process_serial_cmd(String line) {
   }
   if (upper == "START") {
     (void)start_scan_request("SERIAL: start scan");
-    return;
-  }
-  if (upper == "BRIDGE") {
-    (void)start_bridge_scan_request("SERIAL: start bridge scan");
     return;
   }
 
@@ -398,7 +425,4 @@ void loop() {
   refresh_ui();
   delay(10);
 }
-
-
-
 

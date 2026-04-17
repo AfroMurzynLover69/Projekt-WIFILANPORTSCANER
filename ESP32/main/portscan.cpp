@@ -8,6 +8,7 @@
 void set_status(const String &s);
 void set_progress(uint32_t done, uint32_t total);
 void append_log(const String &line);
+void get_port_scan_range(uint32_t &start, uint32_t &end);
 
 namespace {
 
@@ -27,8 +28,9 @@ void run_portscan_phase(const std::vector<IPAddress> &hosts) {
     return;
   }
 
-  const uint32_t port_start = SCAN_PORT_START;
-  const uint32_t port_end = SCAN_PORT_END;
+  uint32_t port_start = 0;
+  uint32_t port_end = 0;
+  get_port_scan_range(port_start, port_end);
   const uint32_t per_host_ports = (port_end >= port_start) ? (port_end - port_start + 1) : 0;
   if (per_host_ports == 0) {
     append_log("PORTSCAN: bledny zakres portow");

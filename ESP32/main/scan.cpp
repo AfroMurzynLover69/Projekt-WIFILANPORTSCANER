@@ -37,6 +37,7 @@ void mark_scan_finished();
 bool is_scan_busy();
 uint32_t ip_to_u32(const IPAddress &ip);
 IPAddress u32_to_ip(uint32_t v);
+void get_port_scan_range(uint32_t &start, uint32_t &end);
 
 const char *scan_mode_name() {
 #if SCAN_MODE == SCAN_MODE_BCAST_THEN_ARP
@@ -340,7 +341,9 @@ void scan_task(void *arg) {
   (void)arg;
 
   mark_scan_started();
-  append_log(String("SCAN: start (") + scan_mode_name() + ")");
+  uint32_t p_start = 0, p_end = 0;
+  get_port_scan_range(p_start, p_end);
+  append_log(String("SCAN: start (") + scan_mode_name() + ") PORTS " + p_start + "-" + p_end);
 
   if (!connect_wifi(SCAN_WIFI_CONNECT_TIMEOUT_MS)) {
     set_status("Status: brak WiFi");
