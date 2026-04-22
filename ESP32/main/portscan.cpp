@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include "konfiguracja.h"
 
@@ -64,6 +66,10 @@ void run_portscan_phase(const std::vector<IPAddress> &hosts) {
       step++;
       if ((step % SCAN_PORT_PROGRESS_EVERY) == 0 || step == total_steps) {
         set_progress(step, total_steps);
+      }
+
+      if (SCAN_PORT_PACE_EVERY > 0 && SCAN_PORT_PACE_DELAY_MS > 0 && (step % SCAN_PORT_PACE_EVERY) == 0) {
+        vTaskDelay(pdMS_TO_TICKS(SCAN_PORT_PACE_DELAY_MS));
       }
     }
 

@@ -65,9 +65,16 @@ static constexpr uint32_t INSTALL_BLOCKS = 24;
 static String g_ui_last_wifi = "";
 static String g_ui_last_status = "";
 static String g_ui_last_log = "";
+static String g_ui_last_mode = "";
 static String g_ui_last_ips = "";
 static String g_ui_last_open_ports = "";
 static int g_ui_last_percent = -1;
+static int g_ui_last_bar_percent = -1;
+static int g_ui_last_start_state = -1;
+static int g_ui_last_discover_state = -1;
+static int g_ui_last_ports_state = -1;
+static int g_ui_last_finish_state = -1;
+static int g_ui_last_finish_error = -1;
 static uint32_t g_ui_last_done = UINT32_MAX;
 static uint32_t g_ui_last_total = UINT32_MAX;
 
@@ -306,6 +313,10 @@ static void ev_start_scan(lv_event_t *e) {
 
 static void update_port_profile_buttons() {
   bool legacy = is_port_profile_legacy();
+  static int8_t s_last_legacy = -1;
+  if (s_last_legacy == (legacy ? 1 : 0)) return;
+  s_last_legacy = legacy ? 1 : 0;
+
   if (g_btn_ports_legacy) {
     lv_obj_set_style_bg_color(g_btn_ports_legacy, legacy ? lv_color_hex(0x2563EB) : lv_color_hex(0x0F172A), 0);
     lv_obj_set_style_border_color(g_btn_ports_legacy, legacy ? lv_color_hex(0x93C5FD) : lv_color_hex(0x334155), 0);
@@ -909,15 +920,34 @@ void refresh_ui() {
 
   if (g_lbl_mode) {
     String mode_line = String("MODE: ") + scan_mode_name() + "  PORTS: " + (is_port_profile_legacy() ? "0-4096" : "FULL");
-    lv_label_set_text(g_lbl_mode, mode_line.c_str());
+    if (mode_line != g_ui_last_mode) {
+      g_ui_last_mode = mode_line;
+      lv_label_set_text(g_lbl_mode, mode_line.c_str());
+    }
   }
   update_port_profile_buttons();
 
-  set_step_card_state(g_card_start, g_lbl_start_state, m.start_state, false);
-  set_step_card_state(g_card_discover, g_lbl_discover_state, m.discover_state, false);
-  set_step_card_state(g_card_ports, g_lbl_ports_state, m.ports_state, false);
-  set_step_card_state(g_card_finish, g_lbl_finish_state, m.finish_state, m.error);
-  set_install_bar_percent(m.progress_percent);
+  if (g_ui_last_start_state != (int)m.start_state) {
+    g_ui_last_start_state = (int)m.start_state;
+    set_step_card_state(g_card_start, g_lbl_start_state, m.start_state, false);
+  }
+  if (g_ui_last_discover_state != (int)m.discover_state) {
+    g_ui_last_discover_state = (int)m.discover_state;
+    set_step_card_state(g_card_discover, g_lbl_discover_state, m.discover_state, false);
+  }
+  if (g_ui_last_ports_state != (int)m.ports_state) {
+    g_ui_last_ports_state = (int)m.ports_state;
+    set_step_card_state(g_card_ports, g_lbl_ports_state, m.ports_state, false);
+  }
+  if (g_ui_last_finish_state != (int)m.finish_state || g_ui_last_finish_error != (m.error ? 1 : 0)) {
+    g_ui_last_finish_state = (int)m.finish_state;
+    g_ui_last_finish_error = m.error ? 1 : 0;
+    set_step_card_state(g_card_finish, g_lbl_finish_state, m.finish_state, m.error);
+  }
+  if (g_ui_last_bar_percent != (int)m.progress_percent) {
+    g_ui_last_bar_percent = (int)m.progress_percent;
+    set_install_bar_percent(m.progress_percent);
+  }
 
   static unsigned long last_log_refresh = 0;
   unsigned long now = millis();

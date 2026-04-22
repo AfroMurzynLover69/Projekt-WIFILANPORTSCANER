@@ -21,6 +21,7 @@ extern "C" {
 
 #include "konfiguracja.h"
 #include "portscan.h"
+#include "scan_log_sd.h"
 
 #if (SCAN_MODE != SCAN_MODE_ARP_ONLY) && (SCAN_MODE != SCAN_MODE_BCAST_THEN_ARP)
 #error "Invalid SCAN_MODE in konfiguracja.h"
@@ -38,6 +39,8 @@ bool is_scan_busy();
 uint32_t ip_to_u32(const IPAddress &ip);
 IPAddress u32_to_ip(uint32_t v);
 void get_port_scan_range(uint32_t &start, uint32_t &end);
+String get_log_snapshot();
+void apply_wifi_link_limits();
 
 const char *scan_mode_name() {
 #if SCAN_MODE == SCAN_MODE_BCAST_THEN_ARP
@@ -103,6 +106,7 @@ bool connect_wifi(unsigned long timeout_ms) {
 
   WiFi.disconnect(true, true);
   WiFi.mode(WIFI_STA);
+  apply_wifi_link_limits();
   WiFi.setSleep(false);
 #ifdef WIFI_POWER_8_5dBm
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
@@ -337,6 +341,89 @@ void run_arp_phase(const IPAddress &local_ip, uint32_t start_u, uint32_t end_u, 
   append_log(String("DISCOVER: czas ") + (elapsed_ms / 1000) + " s");
 }
 
+String build_devices_list(const std::vector<IPAddress> &hosts) {
+  if (hosts.empty()) return "-";
+
+  String out = "";
+  for (uint32_t i = 0; i < hosts.size(); i++) {
+    if (i) out += "\n";
+    out += hosts[i].toString();
+  }
+  return out;
+}
+
+String collect_open_ports_by_ip(const String &log) {
+  std::vector<String> ips;
+  std::vector<String> seen_ports;
+  std::vector<String> list_ports;
+
+  int pos = 0;
+  while (true) {
+    int marker = log.indexOf("PORT ", pos);
+    if (marker < 0) break;
+
+    int payload_start = marker + 5;
+    int payload_end = log.indexOf(" OPEN", payload_start);
+    if (payload_end < 0) {
+      pos = payload_start;
+      continue;
+    }
+
+    String payload = log.substring(payload_start, payload_end);
+    int sep = payload.lastIndexOf(':');
+    if (sep <= 0 || sep >= (int)payload.length() - 1) {
+      pos = payload_end + 5;
+      continue;
+    }
+
+    String ip = payload.substring(0, sep);
+    String port_s = payload.substring(sep + 1);
+    int port = port_s.toInt();
+    bool port_valid = (port_s.length() > 0 && port >= 0 && port <= 65535);
+    if (!port_valid || ip.length() < 7 || ip.length() > 15) {
+      pos = payload_end + 5;
+      continue;
+    }
+
+    int idx = -1;
+    for (unsigned int i = 0; i < ips.size(); i++) {
+      if (ips[i] == ip) {
+        idx = (int)i;
+        break;
+      }
+    }
+
+    if (idx < 0) {
+      ips.push_back(ip);
+      seen_ports.push_back("|");
+      list_ports.push_back("");
+      idx = (int)ips.size() - 1;
+    }
+
+    String key = String("|") + port_s + "|";
+    if (seen_ports[(unsigned int)idx].indexOf(key) < 0) {
+      seen_ports[(unsigned int)idx] += port_s;
+      seen_ports[(unsigned int)idx] += "|";
+      if (list_ports[(unsigned int)idx].length()) list_ports[(unsigned int)idx] += ", ";
+      list_ports[(unsigned int)idx] += port_s;
+    }
+
+    pos = payload_end + 5;
+  }
+
+  if (ips.empty()) return "-";
+
+  String out = "";
+  for (unsigned int i = 0; i < ips.size(); i++) {
+    if (out.length()) out += "\n";
+    out += ips[i];
+    out += " -> ";
+    out += list_ports[i].length() ? list_ports[i] : "-";
+  }
+
+  return out;
+}
+
 void scan_task(void *arg) {
   (void)arg;
 
@@ -393,6 +480,18 @@ void scan_task(void *arg) {
   run_arp_phase(local_ip, start_u, end_u, ip_u, active_hosts);
 
   run_portscan_phase(active_hosts);
+  String raw_log = get_log_snapshot();
+  ScanReportData report;
+  report.wifi_ssid = WiFi.SSID();
+  report.scan_mode = String(scan_mode_name());
+  report.devices = build_devices_list(active_hosts);
+  report.ports = collect_open_ports_by_ip(raw_log);
+  report.raw_log = raw_log;
+  if (scan_log_sd_save(report)) {
+    append_log(String("SD: zapisano raport ") + scan_log_sd_last_file());
+  } else {
+    append_log("SD: nie udalo sie zapisac raportu");
+  }
   finish_scan_task();
 }
 
