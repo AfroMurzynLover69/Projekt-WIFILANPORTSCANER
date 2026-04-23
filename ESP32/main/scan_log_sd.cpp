@@ -75,7 +75,8 @@ bool scan_log_sd_init(esp_expander::CH422G *expander) {
     return false;
   }
 
-  g_sd_ready = SD_MMC.begin(SCAN_SD_MOUNT_POINT, true, false, SCAN_SD_FREQ_HZ, SCAN_SD_MAX_OPEN_FILES);
+  // Ustawienie format_if_empty na 'true' - ESP32 sformatuje kartę do czystego FAT32, jeśli nie potrafi jej zamontować
+  g_sd_ready = SD_MMC.begin(SCAN_SD_MOUNT_POINT, true, true, SCAN_SD_FREQ_HZ, SCAN_SD_MAX_OPEN_FILES);
   return g_sd_ready;
 }
 

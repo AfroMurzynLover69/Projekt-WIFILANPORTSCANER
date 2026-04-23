@@ -359,6 +359,9 @@ bool init_lvgl() {
   g_disp = lv_display_create(LCD_WIDTH, LCD_HEIGHT);
   if (!g_disp) return false;
 
+  // Disable default LVGL theme to prevent white/gray widget styling.
+  lv_display_set_theme(g_disp, nullptr);
+
   lv_display_set_buffers(g_disp, g_buf1, g_buf2, px * sizeof(lv_color_t),
                          g_use_hw_framebuffer_swap ? LV_DISPLAY_RENDER_MODE_FULL : LV_DISPLAY_RENDER_MODE_PARTIAL);
   lv_display_set_flush_cb(g_disp, lv_flush);
