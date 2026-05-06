@@ -72,9 +72,15 @@
 #define TOUCH_MIRROR_Y 0
 #define ENABLE_TOUCH 1
 
-// WiFi
-#define DEFAULT_WIFI_SSID "10"
-#define DEFAULT_WIFI_PASS "R4TAWQ76"
+// WiFi setup AP + web panel
+#define WIFI_CONFIG_PATH "/config.ini"
+#define WIFI_CONFIG_AP_SSID "ESP32-Scanner-Setup"
+#define WIFI_CONFIG_AP_PASS "adminadmin"
+#define WIFI_CONFIG_WEB_USER "admin"
+#define WIFI_CONFIG_WEB_PASS "admin"
+
+// SD firmware update
+#define SD_OTA_FILE_PREFIX "esp32s3rev"
 
 // Scan modes
 #define SCAN_MODE_ARP_ONLY 0

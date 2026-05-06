@@ -1,6 +1,7 @@
 #include "scan_log_sd.h"
 
 #include <SD_MMC.h>
+#include <FS.h>
 #include <WiFi.h>
 #include <time.h>
 
@@ -58,6 +59,41 @@ String ensure_unique_log_path(const String &base_path) {
   return base_path;
 }
 
+bool wipe_dir_contents(const char *dir_path) {
+  File dir = SD_MMC.open(dir_path);
+  if (!dir || !dir.isDirectory()) {
+    if (dir) dir.close();
+    return false;
+  }
+
+  bool ok = true;
+  File entry = dir.openNextFile();
+  while (entry) {
+    String path = entry.path();
+    bool is_dir = entry.isDirectory();
+    entry.close();
+
+    if (path.length() && !path.startsWith("/")) {
+      String parent = dir_path;
+      if (!parent.endsWith("/")) parent += "/";
+      path = parent + path;
+    }
+
+    if (!path.length()) {
+      ok = false;
+    } else if (is_dir) {
+      ok = wipe_dir_contents(path.c_str()) && ok;
+      ok = SD_MMC.rmdir(path.c_str()) && ok;
+    } else {
+      ok = SD_MMC.remove(path.c_str()) && ok;
+    }
+
+    entry = dir.openNextFile();
+  }
+  dir.close();
+  return ok;
+}
+
 }  // namespace
 
 bool scan_log_sd_init(esp_expander::CH422G *expander) {
@@ -75,7 +111,7 @@ bool scan_log_sd_init(esp_expander::CH422G *expander) {
     return false;
   }
 
-  // Ustawienie format_if_empty na 'true' - ESP32 sformatuje kartę do czystego FAT32, jeśli nie potrafi jej zamontować
+  // format_if_mount_failed lets the ESP32 recover a card that cannot be mounted.
   g_sd_ready = SD_MMC.begin(SCAN_SD_MOUNT_POINT, true, true, SCAN_SD_FREQ_HZ, SCAN_SD_MAX_OPEN_FILES);
   return g_sd_ready;
 }
@@ -117,6 +153,10 @@ bool scan_log_sd_save(const ScanReportData &report) {
 
   f.println("=== SCAN REPORT ===");
   f.println(String("timestamp: ") + ts_buf);
+  f.println(String("start_time: ") + (report.start_time.length() ? report.start_time : "-"));
+  f.println(String("end_time: ") + (report.end_time.length() ? report.end_time : "-"));
+  f.println(String("duration_ms: ") + report.duration_ms);
+  f.println(String("duration_s: ") + (report.duration_ms / 1000));
   f.println(String("wifi_ssid: ") + (report.wifi_ssid.length() ? report.wifi_ssid : "-"));
   f.println(String("scan_mode: ") + (report.scan_mode.length() ? report.scan_mode : "-"));
   f.println();
@@ -147,4 +187,26 @@ bool scan_log_sd_save(const ScanReportData &report) {
   f.close();
   g_last_file = path;
   return true;
+}
+
+bool scan_log_sd_wipe() {
+  if (!g_expander) return false;
+
+  set_sd_cs_level(true);
+  delay(2);
+
+  SD_MMC.end();
+  if (!SD_MMC.setPins(PIN_SD_CLK, PIN_SD_CMD, PIN_SD_D0)) return false;
+
+  bool mounted = SD_MMC.begin(SCAN_SD_MOUNT_POINT, true, true, SCAN_SD_FREQ_HZ, SCAN_SD_MAX_OPEN_FILES);
+  if (!mounted) {
+    g_sd_ready = false;
+    return false;
+  }
+
+  bool ok = wipe_dir_contents("/");
+
+  SD_MMC.end();
+  g_sd_ready = SD_MMC.begin(SCAN_SD_MOUNT_POINT, true, true, SCAN_SD_FREQ_HZ, SCAN_SD_MAX_OPEN_FILES);
+  return ok && g_sd_ready;
 }

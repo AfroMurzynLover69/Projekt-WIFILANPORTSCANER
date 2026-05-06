@@ -1,0 +1,16 @@
+# Local Python environment
+python/.venv/
+__pycache__/
+*.py[cod]
+
+# Arduino / ESP32 build artifacts
+ESP32/main/build/
+*.elf
+*.bin
+*.map
+*.hex
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store

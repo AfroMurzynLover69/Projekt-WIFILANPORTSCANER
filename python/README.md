@@ -1,40 +1,41 @@
-# Tester portow dla ESP
+# ESP Port Tester
 
-Skrypt `open_dummy_ports.py` otwiera losowe porty TCP (domyslnie 10), zeby skaner na ESP mogl wykryc je jako otwarte.
-Domyslnie polowa portow jest z zakresu `1024-4000`, a polowa z zakresu `4001-65535`.
+`open_dummy_ports.py` opens random TCP ports so the ESP scanner can detect them as open.
 
-## Szybki start (sh)
+## Quick Start
 
-Skrypt `run_tester.sh` automatycznie:
-- tworzy `venv` w `python/.venv` (tylko przy pierwszym uruchomieniu),
-- aktywuje srodowisko,
-- uruchamia tester portow.
+`run_tester.sh` automatically:
+
+- creates `python/.venv` on the first run
+- activates the virtual environment
+- runs the port tester
 
 ```bash
 ./python/run_tester.sh
 ```
 
-Z wlasnymi parametrami:
+With custom parameters:
 
 ```bash
 ./python/run_tester.sh --count 12 --host 0.0.0.0
 ```
 
-## Uruchomienie
+## Direct Run
 
 ```bash
 python3 python/open_dummy_ports.py
 ```
 
-## Opcje
+## Options
 
 ```bash
 python3 python/open_dummy_ports.py --count 10 --host 0.0.0.0
 ```
 
-- `--count` ile portow otworzyc
-- `--host` interfejs nasluchu (`0.0.0.0` dla calej sieci LAN)
-- `--backlog` wielkosc kolejki polaczen TCP
-- `--low-max` granica "niskiego" zakresu (domyslnie `4000`)
+- `--count` number of ports to open
+- `--host` listen interface (`0.0.0.0` for the whole LAN)
+- `--backlog` TCP connection backlog size
+- `--min-port` lower port range bound
+- `--max-port` upper port range bound
 
-Program dziala do `Ctrl+C` i przyjmuje polaczenia bez dodatkowej uslugi aplikacyjnej.
+The program runs until `Ctrl+C` and accepts TCP connections without an extra application protocol.

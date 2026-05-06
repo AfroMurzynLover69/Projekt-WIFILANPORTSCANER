@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Prosty tester portow:
-- otwiera losowe porty TCP (domyslnie 10)
-- trzyma je aktywne, zeby skaner (np. na ESP) widzial je jako "open"
-- po nacisnieciu Ctrl+C zamyka wszystko
+Simple port tester:
+- opens random TCP ports
+- keeps them active so the scanner can detect them as open
+- closes everything after Ctrl+C
 """
 
 import argparse
@@ -14,30 +14,36 @@ import socket
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Otworz losowe porty TCP do testow skanera."
+        description="Open random TCP ports for scanner tests."
     )
     parser.add_argument(
         "--count",
         type=int,
-        default=10,
-        help="Ile portow otworzyc (domyslnie: 10).",
+        default=15,
+        help="How many ports to open (default: 15).",
     )
     parser.add_argument(
         "--host",
         default="0.0.0.0",
-        help='Interfejs nasluchu, np. "0.0.0.0" albo "127.0.0.1".',
+        help='Listen interface, e.g. "0.0.0.0" or "127.0.0.1".',
     )
     parser.add_argument(
         "--backlog",
         type=int,
         default=8,
-        help="Rozmiar kolejki polaczen TCP (domyslnie: 8).",
+        help="TCP connection backlog size (default: 8).",
     )
     parser.add_argument(
-        "--low-max",
+        "--min-port",
         type=int,
-        default=4000,
-        help="Gorna granica niskiego zakresu portow (domyslnie: 4000).",
+        default=1,
+        help="Lower port range bound (default: 1).",
+    )
+    parser.add_argument(
+        "--max-port",
+        type=int,
+        default=4096,
+        help="Upper port range bound (default: 4096).",
     )
     return parser.parse_args()
 
@@ -79,7 +85,7 @@ def bind_random_ports(
         for sock in listeners:
             sock.close()
         raise RuntimeError(
-            f"Nie udalo sie otworzyc {target_count} portow z zakresu "
+            f"Could not open {target_count} ports from range "
             f"{start_port}-{end_port}."
         )
 
@@ -89,49 +95,37 @@ def bind_random_ports(
 def main() -> None:
     args = parse_args()
     if args.count < 1:
-        raise ValueError("--count musi byc >= 1")
-    if args.low_max < 1024:
-        raise ValueError("--low-max musi byc >= 1024")
-    if args.low_max >= 65535:
-        raise ValueError("--low-max musi byc < 65535")
+        raise ValueError("--count must be >= 1")
+    if args.min_port < 1:
+        raise ValueError("--min-port must be >= 1")
+    if args.max_port > 65535:
+        raise ValueError("--max-port must be <= 65535")
+    if args.min_port > args.max_port:
+        raise ValueError("--min-port must be <= --max-port")
 
     selector = selectors.DefaultSelector()
     listeners = []
     used_ports: set[int] = set()
-    low_count = args.count // 2
-    high_count = args.count - low_count
 
     try:
-        low_listeners = bind_random_ports(
+        listeners = bind_random_ports(
             host=args.host,
             backlog=args.backlog,
-            start_port=1024,
-            end_port=args.low_max,
-            target_count=low_count,
+            start_port=args.min_port,
+            end_port=args.max_port,
+            target_count=args.count,
             used_ports=used_ports,
         )
-        high_listeners = bind_random_ports(
-            host=args.host,
-            backlog=args.backlog,
-            start_port=args.low_max + 1,
-            end_port=65535,
-            target_count=high_count,
-            used_ports=used_ports,
-        )
-
-        listeners.extend(low_listeners)
-        listeners.extend(high_listeners)
         for sock in listeners:
             selector.register(sock, selectors.EVENT_READ)
 
         ports = sorted(sock.getsockname()[1] for sock in listeners)
         ports_csv = ",".join(str(port) for port in ports)
-        print("Aktywne losowe porty TCP:")
+        print("Active random TCP ports:")
         print("  " + ports_csv)
-        print(f"Niski zakres (1024-{args.low_max}): {low_count}")
-        print(f"Wysoki zakres ({args.low_max + 1}-65535): {high_count}")
+        print(f"Range ({args.min_port}-{args.max_port}): {args.count}")
         print("")
-        print("Program czeka na polaczenia. Zatrzymaj: Ctrl+C")
+        print("Waiting for connections. Stop with Ctrl+C")
 
         while True:
             events = selector.select(timeout=1.0)
@@ -139,10 +133,10 @@ def main() -> None:
                 server_sock = key.fileobj
                 conn, addr = server_sock.accept()
                 port = server_sock.getsockname()[1]
-                print(f"[port {port}] polaczenie od {addr[0]}:{addr[1]}")
+                print(f"[port {port}] connection from {addr[0]}:{addr[1]}")
                 conn.close()
     except KeyboardInterrupt:
-        print("\nZatrzymano.")
+        print("\nStopped.")
     finally:
         selector.close()
         for sock in listeners:

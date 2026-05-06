@@ -5,6 +5,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <vector>
+#include <time.h>
 
 extern "C" {
 #include <lwip/etharp.h>
@@ -41,6 +42,8 @@ IPAddress u32_to_ip(uint32_t v);
 void get_port_scan_range(uint32_t &start, uint32_t &end);
 String get_log_snapshot();
 void apply_wifi_link_limits();
+void prepare_wifi_radio_mode();
+bool begin_configured_wifi();
 
 const char *scan_mode_name() {
 #if SCAN_MODE == SCAN_MODE_BCAST_THEN_ARP
@@ -100,18 +103,22 @@ bool init_sta_netif() {
 bool connect_wifi(unsigned long timeout_ms) {
   if (WiFi.status() == WL_CONNECTED) return true;
 
-  set_status("Status: laczenie WiFi...");
-  set_wifi_text("WiFi: laczenie...");
-  append_log("WiFi: start laczenia");
+  set_status("Status: connecting WiFi...");
+  set_wifi_text("WiFi: connecting...");
+  append_log("WiFi: connection start");
 
-  WiFi.disconnect(true, true);
-  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(false, false);
+  prepare_wifi_radio_mode();
   apply_wifi_link_limits();
   WiFi.setSleep(false);
 #ifdef WIFI_POWER_8_5dBm
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
 #endif
-  WiFi.begin(DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS);
+  if (!begin_configured_wifi()) {
+    set_wifi_text("WiFi: missing config");
+    append_log("WiFi: missing config.ini");
+    return false;
+  }
 
   unsigned long t0 = millis();
   while (WiFi.status() != WL_CONNECTED && (millis() - t0) < timeout_ms) {
@@ -120,13 +127,13 @@ bool connect_wifi(unsigned long timeout_ms) {
 
   if (WiFi.status() != WL_CONNECTED) {
     set_wifi_text("WiFi: OFF");
-    append_log("WiFi: brak polaczenia");
+    append_log("WiFi: connection failed");
     return false;
   }
 
   String ip = WiFi.localIP().toString();
   set_wifi_text(String("WiFi: ") + ip);
-  append_log(String("WiFi: polaczono, IP=") + ip);
+  append_log(String("WiFi: connected, IP=") + ip);
   return true;
 }
 
@@ -240,6 +247,14 @@ void log_scan_preamble(const IPAddress &local_ip, const IPAddress &mask) {
   append_log("=================");
 }
 
+String format_time_now() {
+  struct tm tm_now = {};
+  if (!getLocalTime(&tm_now, 0)) return "unknown (NTP not synced)";
+  char buf[32] = {0};
+  strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_now);
+  return String(buf);
+}
+
 void finish_scan_task() {
   mark_scan_finished();
   vTaskDelete(nullptr);
@@ -247,17 +262,17 @@ void finish_scan_task() {
 
 void run_broadcast_ping_phase(const IPAddress &broadcast_ip) {
   append_log(String("BCAST PING: ") + broadcast_ip.toString());
-  set_status("Status: ping broadcast + czekanie...");
+  set_status("Status: broadcast ping wait...");
 
   bool sent = send_icmp_echo_once(broadcast_ip);
-  append_log(sent ? "BCAST PING: wyslano" : "BCAST PING: blad wysylki");
+  append_log(sent ? "BCAST PING: sent" : "BCAST PING: send error");
 
   unsigned long t0 = millis();
   while ((millis() - t0) < SCAN_BROADCAST_WAIT_MS) {
     vTaskDelay(pdMS_TO_TICKS(100));
   }
 
-  append_log(String("BCAST PING: czekano ") + (SCAN_BROADCAST_WAIT_MS / 1000) + " s");
+  append_log(String("BCAST PING: waited ") + (SCAN_BROADCAST_WAIT_MS / 1000) + " s");
 }
 
 void run_arp_phase(const IPAddress &local_ip, uint32_t start_u, uint32_t end_u, uint32_t self_ip_u,
@@ -269,14 +284,14 @@ void run_arp_phase(const IPAddress &local_ip, uint32_t start_u, uint32_t end_u, 
   }
 
   if (scannable_total == 0) {
-    append_log("ARP: brak hostow do sprawdzenia");
-    set_status("Status: zakonczono, brak hostow");
+    append_log("ARP: no hosts to check");
+    set_status("Status: done, no hosts");
     set_progress(0, 0);
     return;
   }
 
-  append_log("DISCOVER: start (ARP, wielorundowy)");
-  set_status("Status: ARP skan...");
+  append_log("DISCOVER: start (ARP, multi-round)");
+  set_status("Status: ARP scan...");
   set_progress(0, scannable_total);
 
   std::vector<uint8_t> seen(host_total, 0);
@@ -312,7 +327,7 @@ void run_arp_phase(const IPAddress &local_ip, uint32_t start_u, uint32_t end_u, 
       probe_count++;
       if ((probe_count % 16) == 0 || active_hosts == scannable_total) {
         set_progress(active_hosts, scannable_total);
-        set_status(String("Status: ARP runda ") + rounds + " " + active_hosts + "/" + scannable_total);
+        set_status(String("Status: ARP round ") + rounds + " " + active_hosts + "/" + scannable_total);
       }
 
       if (SCAN_ARP_PER_HOST_DELAY_MS > 0) {
@@ -329,16 +344,16 @@ void run_arp_phase(const IPAddress &local_ip, uint32_t start_u, uint32_t end_u, 
   set_progress(active_hosts, scannable_total);
 
   if (active_hosts == scannable_total) {
-    append_log(String("DISCOVER: komplet, hosty=") + active_hosts + ", rundy=" + rounds);
-    set_status(String("Status: zakonczono, hosty aktywne=") + active_hosts);
+    append_log(String("DISCOVER: complete, hosts=") + active_hosts + ", rounds=" + rounds);
+    set_status(String("Status: done, active hosts=") + active_hosts);
   } else {
     uint32_t missing = scannable_total - active_hosts;
-    append_log(String("DISCOVER: timeout ") + (SCAN_ARP_TOTAL_WAIT_MS / 1000) + " s, hosty=" + active_hosts +
-               ", brak=" + missing + ", rundy=" + rounds);
-    set_status(String("Status: timeout, hosty=") + active_hosts + "/" + scannable_total);
+    append_log(String("DISCOVER: timeout ") + (SCAN_ARP_TOTAL_WAIT_MS / 1000) + " s, hosts=" + active_hosts +
+               ", missing=" + missing + ", rounds=" + rounds);
+    set_status(String("Status: timeout, hosts=") + active_hosts + "/" + scannable_total);
   }
 
-  append_log(String("DISCOVER: czas ") + (elapsed_ms / 1000) + " s");
+  append_log(String("DISCOVER: elapsed ") + (elapsed_ms / 1000) + " s");
 }
 
 String build_devices_list(const std::vector<IPAddress> &hosts) {
@@ -427,20 +442,23 @@ String collect_open_ports_by_ip(const String &log) {
 void scan_task(void *arg) {
   (void)arg;
 
+  unsigned long scan_start_ms = millis();
+  String scan_start_time = format_time_now();
+
   mark_scan_started();
   uint32_t p_start = 0, p_end = 0;
   get_port_scan_range(p_start, p_end);
   append_log(String("SCAN: start (") + scan_mode_name() + ") PORTS " + p_start + "-" + p_end);
 
   if (!connect_wifi(SCAN_WIFI_CONNECT_TIMEOUT_MS)) {
-    set_status("Status: brak WiFi");
+    set_status("Status: missing WiFi");
     finish_scan_task();
     return;
   }
 
   if (!init_sta_netif()) {
-    append_log("SCAN: blad inicjalizacji netif");
-    set_status("Status: blad netif");
+    append_log("SCAN: netif init error");
+    set_status("Status: netif error");
     finish_scan_task();
     return;
   }
@@ -457,8 +475,8 @@ void scan_task(void *arg) {
   uint32_t start_u = net_u + 1;
   uint32_t end_u = broadcast_u - 1;
   if (end_u <= start_u) {
-    set_status("Status: zla podsiec");
-    append_log("SCAN: niepoprawny zakres hostow");
+    set_status("Status: invalid subnet");
+    append_log("SCAN: invalid host range");
     finish_scan_task();
     return;
   }
@@ -467,7 +485,7 @@ void scan_task(void *arg) {
   if (host_total > SCAN_MAX_HOSTS) {
     end_u = start_u + SCAN_MAX_HOSTS - 1;
     host_total = SCAN_MAX_HOSTS;
-    append_log(String("SCAN: ograniczono do ") + SCAN_MAX_HOSTS + " hostow");
+    append_log(String("SCAN: limited to ") + SCAN_MAX_HOSTS + " hosts");
   }
 
   (void)host_total;
@@ -480,17 +498,22 @@ void scan_task(void *arg) {
   run_arp_phase(local_ip, start_u, end_u, ip_u, active_hosts);
 
   run_portscan_phase(active_hosts);
+  String scan_end_time = format_time_now();
+  uint32_t scan_duration_ms = (uint32_t)(millis() - scan_start_ms);
   String raw_log = get_log_snapshot();
   ScanReportData report;
+  report.start_time = scan_start_time;
+  report.end_time = scan_end_time;
+  report.duration_ms = scan_duration_ms;
   report.wifi_ssid = WiFi.SSID();
   report.scan_mode = String(scan_mode_name());
   report.devices = build_devices_list(active_hosts);
   report.ports = collect_open_ports_by_ip(raw_log);
   report.raw_log = raw_log;
   if (scan_log_sd_save(report)) {
-    append_log(String("SD: zapisano raport ") + scan_log_sd_last_file());
+    append_log(String("SD: report saved ") + scan_log_sd_last_file());
   } else {
-    append_log("SD: nie udalo sie zapisac raportu");
+    append_log("SD: report save failed");
   }
   finish_scan_task();
 }
@@ -499,13 +522,13 @@ void scan_task(void *arg) {
 
 bool start_scan_request(const char *source) {
   if (is_scan_busy()) {
-    append_log("SCAN: juz trwa");
+    append_log("SCAN: already running");
     return false;
   }
 
   append_log(source ? String(source) : String("SCAN: start"));
   if (xTaskCreatePinnedToCore(scan_task, "scan_task", 8192, nullptr, 1, &g_scan_task, 0) != pdPASS) {
-    append_log("SCAN: blad tworzenia taska");
+    append_log("SCAN: task create error");
     return false;
   }
 

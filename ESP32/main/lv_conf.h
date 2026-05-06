@@ -2,9 +2,9 @@
 #define LV_CONF_H
 
 /*
- * Projekt dostarcza lokalne lv_conf.h, zeby build Arduino nie zalezyl
- * od recznego kopiowania konfiguracji obok zainstalowanej biblioteki lvgl.
- * Reszte opcji dopelnia lv_conf_internal.h z samej biblioteki.
+ * This project ships a local lv_conf.h so the Arduino build does not depend
+ * on manually copying configuration next to the installed LVGL library.
+ * The remaining options are filled by lv_conf_internal.h from the library.
  */
 
 #define LV_COLOR_DEPTH 16

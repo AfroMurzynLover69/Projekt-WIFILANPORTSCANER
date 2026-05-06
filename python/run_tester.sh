@@ -6,19 +6,19 @@ VENV_DIR="${SCRIPT_DIR}/.venv"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
-  echo "Blad: nie znaleziono ${PYTHON_BIN} w PATH."
+  echo "Error: ${PYTHON_BIN} was not found in PATH."
   exit 1
 fi
 
 if [ ! -d "${VENV_DIR}" ]; then
-  echo "Tworze virtualenv w ${VENV_DIR}..."
+  echo "Creating virtualenv in ${VENV_DIR}..."
   "${PYTHON_BIN}" -m venv "${VENV_DIR}"
 fi
 
 # shellcheck disable=SC1091
 source "${VENV_DIR}/bin/activate"
 
-# Domyslne parametry pod testy ESP po LAN.
+# Default parameters for ESP tests over LAN.
 if [ "$#" -eq 0 ]; then
   set -- --count 10 --host 0.0.0.0
 fi

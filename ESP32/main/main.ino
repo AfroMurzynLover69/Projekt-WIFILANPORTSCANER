@@ -11,8 +11,15 @@
 #define LV_CONF_PATH "lv_conf.h"
 #include <lvgl.h>
 #include "konfiguracja.h"
+#if __has_include("esp_eap_client.h")
+#include "esp_eap_client.h"
+#else
+#include "esp_wpa2.h"
+#endif
 #include "gui.h"
 #include "scan_log_sd.h"
+#include "wifi_config.h"
+#include "wifi_portal.h"
 
 using namespace esp_panel::drivers;
 
@@ -32,7 +39,7 @@ TaskHandle_t g_scan_task = nullptr;
 bool g_scan_running = false;
 
 static String g_wifi_text = "WiFi: OFF";
-static String g_status_text = "Status: gotowy";
+static String g_status_text = "Status: ready";
 static String g_log_text = "Log: start\n";
 static uint32_t g_progress_done = 0;
 static uint32_t g_progress_total = 0;
@@ -177,32 +184,83 @@ void apply_wifi_link_limits() {
 #endif
 }
 
+void prepare_wifi_radio_mode() {
+  WiFi.mode(wifi_portal_running() ? WIFI_AP_STA : WIFI_STA);
+}
+
+bool begin_configured_wifi() {
+  WifiRuntimeConfig cfg;
+  wifi_config_get(cfg);
+  if (!cfg.valid) {
+    set_wifi_text("WiFi: missing config");
+    return false;
+  }
+
+  if (cfg.auth_mode == WIFI_AUTH_PERSONAL) {
+    if (cfg.password.length()) WiFi.begin(cfg.ssid.c_str(), cfg.password.c_str());
+    else WiFi.begin(cfg.ssid.c_str());
+    return true;
+  }
+
+#if CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT
+  const char *identity = cfg.identity.length() ? cfg.identity.c_str() : cfg.username.c_str();
+  const char *anonymous = cfg.anonymous_identity.length() ? cfg.anonymous_identity.c_str() : identity;
+  if (cfg.auth_mode == WIFI_AUTH_ENTERPRISE_TTLS_PAP) {
+    WiFi.begin(cfg.ssid.c_str(), WPA2_AUTH_TTLS, anonymous, cfg.username.c_str(), cfg.password.c_str(), nullptr, nullptr,
+               nullptr, ESP_EAP_TTLS_PHASE2_PAP);
+  } else {
+    WiFi.begin(cfg.ssid.c_str(), WPA2_AUTH_PEAP, anonymous, cfg.username.c_str(), cfg.password.c_str());
+  }
+  return true;
+#else
+  append_log("WiFi: this ESP32 core has no WPA2 Enterprise");
+  set_wifi_text("WiFi: enterprise OFF");
+  return false;
+#endif
+}
+
 static unsigned long g_wifi_retry_ts = 0;
+static uint32_t g_wifi_applied_config_version = 0;
 
 static void wifi_bootstrap_start() {
-  WiFi.mode(WIFI_STA);
+  prepare_wifi_radio_mode();
   apply_wifi_link_limits();
   WiFi.setSleep(false);
 #ifdef WIFI_POWER_8_5dBm
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
 #endif
-  set_wifi_text("WiFi: laczenie...");
-  WiFi.begin(DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS);
+  set_wifi_text("WiFi: connecting...");
+  if (begin_configured_wifi()) {
+    g_wifi_applied_config_version = wifi_config_version();
+  }
   g_wifi_retry_ts = millis();
 }
 
 static void wifi_bootstrap_pump() {
   if (is_scan_busy()) return;
-  if (WiFi.status() == WL_CONNECTED) return;
 
   unsigned long now = millis();
+  if (wifi_config_version() != g_wifi_applied_config_version) {
+    g_wifi_retry_ts = now;
+    g_wifi_applied_config_version = wifi_config_version();
+    set_wifi_text("WiFi: connecting...");
+    append_log("WiFi: new configuration, reconnect");
+    WiFi.disconnect(false, false);
+    prepare_wifi_radio_mode();
+    apply_wifi_link_limits();
+    (void)begin_configured_wifi();
+    return;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) return;
   if ((now - g_wifi_retry_ts) < 8000) return;
 
   g_wifi_retry_ts = now;
-  set_wifi_text("WiFi: laczenie...");
+  set_wifi_text("WiFi: connecting...");
   WiFi.disconnect(false, false);
+  prepare_wifi_radio_mode();
   apply_wifi_link_limits();
-  WiFi.begin(DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS);
+  (void)begin_configured_wifi();
 }
 
 // Hardware
@@ -402,6 +460,7 @@ static void sys_task_main(void *arg) {
   (void)arg;
   while (true) {
     serial_pump();
+    wifi_portal_pump();
     wifi_bootstrap_pump();
     vTaskDelay(pdMS_TO_TICKS(10));
   }
@@ -411,7 +470,7 @@ static void sys_task_main(void *arg) {
 
 // Serial commands
 void print_serial_help() {
-  Serial.println("KOMENDY:");
+  Serial.println("COMMANDS:");
   Serial.println("  HELP");
   Serial.println("  STATUS");
   Serial.println("  START   (local scan)");
@@ -424,6 +483,7 @@ static void serial_status() {
   Serial.println(is_scan_busy() ? "SCAN: RUNNING" : "SCAN: IDLE");
   Serial.println(String("MODE: ") + scan_mode_name() + " + PORTS " + port_start + "-" + port_end);
   Serial.println(scan_log_sd_status_text());
+  Serial.println(wifi_portal_status_text());
   String last_file = scan_log_sd_last_file();
   if (last_file.length()) Serial.println(String("SD_LAST_FILE: ") + last_file);
 }
@@ -454,7 +514,7 @@ static void process_serial_cmd(String line) {
     return;
   }
 
-  Serial.println("ERR nieznana komenda. Wpisz HELP");
+  Serial.println("ERR unknown command. Type HELP");
 }
 
 void serial_setup() {
@@ -483,23 +543,42 @@ void serial_pump() {
 void setup() {
   init_app_state();
   serial_setup();
-  wifi_bootstrap_start();
 
   if (!init_lcd_touch()) {
     while (true) delay(500);
   }
 
   if (scan_log_sd_init(g_expander)) {
-    append_log("SD: karta gotowa");
+    append_log("SD: card ready");
   } else {
-    append_log("SD: init fail (brak karty/mount)");
+    append_log("SD: init fail (missing card/mount)");
   }
+
+  if (wifi_config_load()) {
+    append_log("WiFi config: loaded /config.ini");
+  } else {
+    append_log("WiFi config: missing /config.ini or SD");
+  }
+
+  WifiRuntimeConfig cfg;
+  wifi_config_get(cfg);
+  if (cfg.ap_enabled) {
+    if (wifi_portal_start()) {
+      append_log(String("AP config: ") + WIFI_CONFIG_AP_SSID + " IP=" + WiFi.softAPIP().toString());
+    } else {
+      append_log("AP config: start fail");
+    }
+  } else {
+    append_log("AP config: OFF");
+  }
+  wifi_bootstrap_start();
 
   if (!init_lvgl()) {
     while (true) delay(500);
   }
 
   create_gui();
+  show_sd_ota_prompt_if_available();
 
   if (xTaskCreatePinnedToCore(ui_task_main, "ui_task", 8192, nullptr, 2, &g_ui_task, 1) != pdPASS) {
     append_log("TASK: ui_task create fail");

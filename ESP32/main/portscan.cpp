@@ -25,8 +25,8 @@ bool tcp_port_open(const IPAddress &host, uint16_t port, uint32_t timeout_ms) {
 
 void run_portscan_phase(const std::vector<IPAddress> &hosts) {
   if (hosts.empty()) {
-    append_log("PORTSCAN: pominieto, brak hostow");
-    set_status("Status: zakonczono, brak hostow do port scan");
+    append_log("PORTSCAN: skipped, no hosts");
+    set_status("Status: done, no hosts for port scan");
     return;
   }
 
@@ -35,8 +35,8 @@ void run_portscan_phase(const std::vector<IPAddress> &hosts) {
   get_port_scan_range(port_start, port_end);
   const uint32_t per_host_ports = (port_end >= port_start) ? (port_end - port_start + 1) : 0;
   if (per_host_ports == 0) {
-    append_log("PORTSCAN: bledny zakres portow");
-    set_status("Status: blad zakresu portow");
+    append_log("PORTSCAN: invalid port range");
+    set_status("Status: invalid port range");
     return;
   }
 
@@ -44,8 +44,8 @@ void run_portscan_phase(const std::vector<IPAddress> &hosts) {
   uint32_t step = 0;
   uint32_t hosts_with_open = 0;
 
-  append_log(String("PORTSCAN: start hosty=") + hosts.size() + ", porty=" + port_start + "-" + port_end);
-  set_status("Status: port scan hostow...");
+  append_log(String("PORTSCAN: start hosts=") + hosts.size() + ", ports=" + port_start + "-" + port_end);
+  set_status("Status: port scan hosts...");
   set_progress(0, total_steps);
 
   for (uint32_t h = 0; h < hosts.size(); h++) {
@@ -84,6 +84,6 @@ void run_portscan_phase(const std::vector<IPAddress> &hosts) {
     set_status(String("Status: port scan host ") + (h + 1) + "/" + hosts.size());
   }
 
-  append_log(String("PORTSCAN: koniec, hosty z open portami=") + hosts_with_open);
-  set_status(String("Status: zakonczono, port scan hostow=") + hosts.size());
+  append_log(String("PORTSCAN: done, hosts with open ports=") + hosts_with_open);
+  set_status(String("Status: done, port scan hosts=") + hosts.size());
 }
